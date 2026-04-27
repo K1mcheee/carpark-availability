@@ -60,6 +60,22 @@ const statements = {
     ORDER BY id DESC
     LIMIT 1
   `),
+  upsertStaticDataset: db.prepare(`
+    INSERT INTO static_datasets (
+      dataset_key,
+      fetched_at,
+      payload_json
+    ) VALUES (?, ?, ?)
+    ON CONFLICT(dataset_key) DO UPDATE SET
+      fetched_at = excluded.fetched_at,
+      payload_json = excluded.payload_json
+  `),
+  staticDatasetByKey: db.prepare(`
+    SELECT dataset_key, fetched_at, payload_json
+    FROM static_datasets
+    WHERE dataset_key = ?
+    LIMIT 1
+  `),
 };
 
 let syncInFlight = null;
@@ -230,6 +246,14 @@ function saveSnapshot(snapshot) {
   );
 }
 
+function saveStaticDataset(datasetKey, payloadJson) {
+  statements.upsertStaticDataset.run(datasetKey, new Date().toISOString(), payloadJson);
+}
+
+function loadStaticDataset(datasetKey) {
+  return statements.staticDatasetByKey.get(datasetKey);
+}
+
 async function fetchLivePayload() {
   const [hdbStaticLookup, hdbAvailability, ltaAvailability] = await Promise.all([
     getHdbStaticLookup(),
@@ -267,8 +291,28 @@ async function fetchLivePayload() {
 }
 
 async function getHdbStaticLookup() {
-  if (cache.hdbStatic.value && Date.now() - cache.hdbStatic.fetchedAt < 24 * 60 * 60 * 1000) {
+  if (cache.hdbStatic.value) {
     return cache.hdbStatic.value;
+  }
+
+  const storedStatic = loadStaticDataset("hdb_static_lookup");
+  if (storedStatic) {
+    const lookup = staticLookupFromJson(storedStatic.payload_json);
+    cache.hdbStatic = {
+      value: lookup,
+      fetchedAt: Date.parse(storedStatic.fetched_at) || Date.now(),
+    };
+    return lookup;
+  }
+
+  const derivedLookup = deriveHdbStaticLookupFromSnapshot();
+  if (derivedLookup.size > 0) {
+    saveStaticDataset("hdb_static_lookup", lookupToJson(derivedLookup));
+    cache.hdbStatic = {
+      value: derivedLookup,
+      fetchedAt: Date.now(),
+    };
+    return derivedLookup;
   }
 
   const response = await fetchJson(HDB_STATIC_INFO_URL);
@@ -287,8 +331,60 @@ async function getHdbStaticLookup() {
     value: lookup,
     fetchedAt: Date.now(),
   };
+  saveStaticDataset("hdb_static_lookup", lookupToJson(lookup));
 
   return lookup;
+}
+
+function lookupToJson(lookup) {
+  return JSON.stringify(
+    Array.from(lookup.entries()).map(([code, value]) => ({
+      code,
+      address: value.address || "",
+      type: value.type || "",
+    }))
+  );
+}
+
+function staticLookupFromJson(payloadJson) {
+  const records = JSON.parse(payloadJson);
+  return new Map(
+    records.map((record) => [
+      record.code,
+      {
+        address: record.address || "",
+        type: record.type || "HDB Carpark",
+      },
+    ])
+  );
+}
+
+function deriveHdbStaticLookupFromSnapshot() {
+  const latestSuccessful = loadLatestSuccessfulPayload();
+  if (!latestSuccessful?.payload_json) {
+    return new Map();
+  }
+
+  const payload = JSON.parse(latestSuccessful.payload_json);
+  const carparks = Array.isArray(payload.carparks) ? payload.carparks : [];
+  const records = carparks
+    .filter((carpark) => carpark.source === "HDB")
+    .map((carpark) => ({
+      code: carpark.code,
+      address: carpark.displayName || "",
+      type: String(carpark.secondaryText || "").split(" - ")[0] || "HDB Carpark",
+    }))
+    .filter((record) => record.code && record.address);
+
+  return new Map(
+    records.map((record) => [
+      record.code,
+      {
+        address: record.address,
+        type: record.type,
+      },
+    ])
+  );
 }
 
 function mergeHdbCarparks(liveCarparks, staticLookup) {
@@ -592,6 +688,12 @@ function initializeDatabase() {
 
     CREATE INDEX IF NOT EXISTS idx_sync_snapshots_status_id
       ON sync_snapshots (status, id DESC);
+
+    CREATE TABLE IF NOT EXISTS static_datasets (
+      dataset_key TEXT PRIMARY KEY,
+      fetched_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    );
   `);
 }
 
