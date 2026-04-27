@@ -1,0 +1,12 @@
+{
+  "name": "parkwhere-sg",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Search Singapore HDB carpark availability by human-readable name.",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}

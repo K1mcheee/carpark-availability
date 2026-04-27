@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: parkwhere-sg
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    disk:
+      name: parkwhere-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 22.14.0
+      - key: DATABASE_PATH
+        value: /var/data/parkwhere.sqlite
+      - key: CACHE_STALE_MS
+        value: 60000
+      - key: REFRESH_COOLDOWN_MS
+        value: 60000
+      - key: LTA_ACCOUNT_KEY
+        sync: false
