@@ -257,7 +257,11 @@ function loadStaticDataset(datasetKey) {
 async function fetchLivePayload() {
   const [hdbStaticLookup, hdbAvailability, ltaAvailability] = await Promise.all([
     getHdbStaticLookup(),
-    fetchJson(HDB_AVAILABILITY_URL),
+    fetchJson(HDB_AVAILABILITY_URL, {
+          headers: {
+      'x-api-key': process.env.DATA_GOV_KEY,
+    },
+    }),
     fetchLtaAvailability(),
   ]);
 
@@ -315,7 +319,11 @@ async function getHdbStaticLookup() {
     return derivedLookup;
   }
 
-  const response = await fetchJson(HDB_STATIC_INFO_URL);
+  const response = await fetchJson(HDB_STATIC_INFO_URL, {
+    headers: {
+      'x-api-key': process.env.DATA_GOV_KEY,
+    },
+  });
   const records = response?.result?.records || [];
   const lookup = new Map(
     records.map((record) => [
